@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visit Route Map</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        * { font-family: 'Inter', sans-serif; }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+
+        .header-bg { background: linear-gradient(135deg, #0f766e 0%, #115e59 100%); }
+
+        .custom-marker {
+            background: #0d9488;
+            color: white;
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 14px;
+            border: 3px solid white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .custom-marker:hover { transform: scale(1.15); }
+        .custom-marker.active { background: #dc2626 !important; transform: scale(1.2); }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(13, 148, 136, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(13, 148, 136, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(13, 148, 136, 0); }
+        }
+        .marker-pulse { animation: pulse 2s infinite; }
+
+        .visit-card {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border-left: 4px solid transparent;
+        }
+        .visit-card:hover { transform: translateX(4px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        .visit-card.active { border-left-color: #0d9488; background: #f0fdfa; }
+
+        .upload-zone {
+            transition: all 0.3s ease;
+            border: 2px dashed #cbd5e1;
+        }
+        .upload-zone:hover, .upload-zone.dragover { border-color: #0d9488; background: #f0fdfa; }
+
+        .leaflet-tooltip {
+            background: rgba(15, 23, 42, 0.9);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 13px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        .leaflet-tooltip-left:before { border-left-color: rgba(15, 23, 42, 0.9); }
+        .leaflet-tooltip-right:before { border-right-color: rgba(15, 23, 42, 0.9); }
+
+        /* Route line styles */
+        .route-line {
+            stroke-dasharray: 1000;
+            stroke-dashoffset: 1000;
+            animation: drawLine 1.5s ease-out forwards;
+        }
+        @keyframes drawLine { to { stroke-dashoffset: 0; } }
+
+        .route-label {
+            background: rgba(15, 23, 42, 0.85);
+            color: white;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+
+        .spinner {
+            border: 3px solid #e2e8f0;
+            border-top: 3px solid #0d9488;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 0.8s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .saved-route-card { transition: all 0.2s ease; }
+        .saved-route-card:hover { background: #f0fdfa; border-color: #0d9488; }
+
+        .modal-overlay { background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); }
+
+        .share-link-box {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+            color: #0f766e;
+        }
+
+        .export-header {
+            background: linear-gradient(135deg, #0f766e 0%, #115e59 100%);
+            color: white;
+            padding: 20px 24px;
+        }
+        .export-footer {
+            background: #f8fafc;
+            border-top: 1px solid #e2e8f0;
+            padding: 12px 24px;
+        }
+        .export-disclaimer {
+            font-size: 9px;
+            color: #64748b;
+            line-height: 1.5;
+            border-left: 3px solid #0d9488;
+            padding-left: 10px;
+            background: #f0fdfa;
+            padding: 8px 12px;
+            border-radius: 0 6px 6px 0;
+        }
+
+        @media print {
+            .no-print { display: none !important; }
+            #map { height: 100vh !important; }
+            body { overflow: hidden; }
+        }
+
+        /* Sidebar toggle button */
+        .sidebar-toggle-btn {
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 1001;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-left: none;
+            border-radius: 0 8px 8px 0;
+            padding: 8px 6px;
+            cursor: pointer;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        .sidebar-toggle-btn:hover {
+            background: #f0fdfa;
+            color: #0d9488;
+        }
+
+        /* Sidebar transition */
+        #sidebar {
+            transition: all 0.3s ease;
+        }
+
+        /* Canvas marker number labels */
+        .marker-number-label {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            color: white !important;
+            font-weight: 700 !important;
+            font-size: 13px !important;
+            font-family: Inter, Arial, sans-serif !important;
+            text-align: center !important;
+            line-height: 1 !important;
+        }
+        .marker-number-label::before {
+            display: none !important;
+        }
+        .marker-number-label .leaflet-tooltip-content {
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        </style>
+</head>
+<body class="bg-slate-50 h-screen overflow-hidden flex flex-col">
+
+    <!-- Header -->
+    <header class="header-bg text-white px-6 py-4 flex items-center justify-between shrink-0 z-20 shadow-lg">
+        <div class="flex items-center gap-4">
+            <div class="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center backdrop-blur">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0121 18.382V7.618a1 1 0 01-.447-.894L15 7m0 13V7"/>
+                </svg>
+            </div>
+            <div>
+                <h1 class="text-xl font-bold tracking-tight">Visit Route Map</h1>
+                <p class="text-teal-100 text-sm">Upload coordinates &middot; Real road routes &middot; Share routes</p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3 no-print">
+            <button id="btnViewMode" class="px-4 py-2 bg-white/15 hover:bg-white/25 rounded-lg text-sm font-medium transition flex items-center gap-2 hidden">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z"/>
+                </svg>
+                Back to Creator
+            </button>
+            <button id="btnLoadSample" class="px-4 py-2 bg-white/15 hover:bg-white/25 rounded-lg text-sm font-medium transition flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                </svg>
+                Load Sample
+            </button>
+            <button id="btnExportPNG" class="px-4 py-2 bg-white/15 hover:bg-white/25 rounded-lg text-sm font-medium transition flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+                Export PNG
+            </button>
+            <button id="btnExportPDF" class="px-4 py-2 bg-white text-teal-800 hover:bg-teal-50 rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-sm">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                </svg>
+                Export PDF
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="flex flex-1 overflow-hidden relative">
+
+        <!-- Sidebar Toggle Button -->
+        <button id="sidebarToggleBtn" class="sidebar-toggle-btn no-print" title="Hide Sidebar">
+            <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/>
+            </svg>
+        </button>
+
+        <!-- Sidebar -->
+        <aside id="sidebar" class="w-[420px] bg-white border-r border-slate-200 flex flex-col shrink-0 z-10 shadow-sm no-print">
+
+            <!-- CREATOR MODE -->
+            <div id="creatorPanel" class="flex flex-col h-full">
+
+                <!-- Upload Section -->
+                <div class="p-5 border-b border-slate-100">
+                    <div class="flex gap-3">
+                        <div id="uploadZone" class="upload-zone rounded-xl p-4 text-center cursor-pointer bg-slate-50 flex-1">
+                            <input type="file" id="fileInput" accept=".csv" class="hidden">
+                            <div class="w-10 h-10 bg-teal-100 text-teal-700 rounded-full flex items-center justify-center mx-auto mb-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                                </svg>
+                            </div>
+                            <p class="text-xs font-semibold text-slate-700">Drop CSV file here</p>
+                            <p class="text-[10px] text-slate-400 mt-0.5">or click to browse</p>
+                        </div>
+
+                        <div id="logoUploadZone" class="upload-zone rounded-xl p-4 text-center cursor-pointer bg-slate-50 flex-1 relative">
+                            <input type="file" id="logoInput" accept="image/*" class="hidden">
+                            <button id="btnRemoveLogo" class="hidden absolute top-1 right-1 w-5 h-5 bg-white rounded-full border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-300 flex items-center justify-center text-xs leading-none z-10" title="Remove logo">✕</button>
+                            <div id="logoZoneEmpty">
+                                <div class="w-10 h-10 bg-slate-200 text-slate-500 rounded-full flex items-center justify-center mx-auto mb-2">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                    </svg>
+                                </div>
+                                <p class="text-xs font-semibold text-slate-700">Drop logo here</p>
+                                <p class="text-[10px] text-slate-400 mt-0.5">or click to browse</p>
+                            </div>
+                            <img id="logoZonePreview" class="hidden mx-auto max-h-14 object-contain" src="" alt="Logo preview">
+                        </div>
+                    </div>
+                    <p class="text-[10px] text-slate-400 mt-3">CSV rows 1-3: <code>RouteTitle</code>, <code>Subtitle</code>, <code>VisitDate</code> — then columns: Sl, Time, Duration, Activity, Camp, Agency, lat, lon</p>
+                    <button id="btnDownloadTemplate" class="text-[10px] text-teal-600 hover:text-teal-700 font-semibold mt-1.5 underline">Download CSV template</button>
+                </div>
+
+                <!-- Route Metadata -->
+                <div class="p-5 border-b border-slate-100 bg-slate-50/50">
+                    <p class="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wider">Route Information</p>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 block mb-1">Title *</label>
+                            <input type="text" id="routeTitle" placeholder="e.g., Bangladesh, Cox's Bazar: Rohingya Refugee Response" 
+                                   class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-slate-600 block mb-1">Subtitle</label>
+                            <input type="text" id="routeSubtitle" placeholder="e.g., Canadian High Commissioner Visit" 
+                                   class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                        </div>
+                        <div class="flex gap-3">
+                            <div class="flex-1">
+                                <label class="text-xs font-medium text-slate-600 block mb-1">Visit Date</label>
+                                <input type="date" id="routeDate" 
+                                       class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                            </div>
+                            <div class="flex-1">
+                                <label class="text-xs font-medium text-slate-600 block mb-1">Data Source</label>
+                                <input type="text" id="routeSource" value="RCP" placeholder="e.g., RCP" 
+                                       class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Route Mode Toggle (MOVED TO SIDEBAR) -->
+                <div class="p-4 border-b border-slate-100 bg-white">
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Route Mode</p>
+                        <span id="routeStatus" class="text-[10px] text-slate-400 font-medium">Using OSRM real road routing</span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="btnRealRoute" class="flex-1 px-3 py-2 bg-teal-600 text-white text-xs font-medium rounded-lg transition flex items-center justify-center gap-1.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0121 18.382V7.618a1 1 0 01-.447-.894L15 7m0 13V7"/>
+                            </svg>
+                            Real Roads
+                        </button>
+                        <button id="btnDirectRoute" class="flex-1 px-3 py-2 bg-slate-200 text-slate-600 text-xs font-medium rounded-lg hover:bg-slate-300 transition flex items-center justify-center gap-1.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+                            </svg>
+                            Direct Lines
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Visit List -->
+                <div class="flex-1 overflow-y-auto p-4">
+                    <p class="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wider">Visit List</p>
+                    <div id="visitList" class="space-y-2">
+                        <div class="text-center py-12 text-slate-400">
+                            <svg class="w-12 h-12 mx-auto mb-3 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0121 18.382V7.618a1 1 0 01-.447-.894L15 7m0 13V7"/>
+                            </svg>
+                            <p class="text-sm">Upload a CSV file to see<br>your visit route</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Saved Routes -->
+                <div class="p-4 border-t border-slate-100 bg-slate-50/50 max-h-[200px] overflow-y-auto">
+                    <div class="flex items-center justify-between mb-3">
+                        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Saved Routes</p>
+                        <button id="btnSaveRoute" class="text-xs bg-teal-600 text-white px-3 py-1.5 rounded-lg hover:bg-teal-700 transition font-medium flex items-center gap-1">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
+                            </svg>
+                            Save Current
+                        </button>
+                    </div>
+                    <div id="savedRoutesList" class="space-y-2">
+                        <p class="text-sm text-slate-400 text-center py-4">No saved routes yet.<br>Upload data and save to create shareable links.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VIEWER MODE -->
+            <div id="viewerPanel" class="hidden flex-col h-full">
+                <div class="p-5 border-b border-slate-100 bg-teal-50">
+                    <p class="text-xs font-semibold text-teal-600 mb-1 uppercase tracking-wider">Viewing Route</p>
+                    <h2 id="viewerTitle" class="text-lg font-bold text-slate-800 leading-tight">--</h2>
+                    <p id="viewerSubtitle" class="text-sm text-slate-600 mt-1">--</p>
+                    <div class="flex items-center gap-3 mt-2 text-xs text-slate-500">
+                        <span id="viewerDate">--</span>
+                        <span class="text-slate-300">|</span>
+                        <span id="viewerSource">--</span>
+                    </div>
+                </div>
+
+                <div class="px-5 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 bg-teal-500 rounded-full animate-pulse"></span>
+                        <span class="text-xs font-semibold text-slate-600" id="viewerVisitCount">0 visits</span>
+                    </div>
+                    <div class="text-xs text-slate-400" id="viewerTotalDuration">--</div>
+                </div>
+
+                <div class="flex-1 overflow-y-auto p-3" id="viewerVisitList">
+                    <div class="text-center py-12 text-slate-400">
+                        <p class="text-sm">Loading route...</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Map Container -->
+        <main class="flex-1 relative bg-slate-100">
+            <!-- Map Title Overlay -->
+            <div id="mapTitleOverlay" class="absolute top-4 left-4 right-32 bg-white/95 backdrop-blur rounded-xl p-4 shadow-lg border border-slate-200 z-[1000] flex items-center justify-between gap-4">
+                <div class="min-w-0">
+                    <h2 id="mapTitle" class="text-lg font-bold text-slate-800 leading-tight">--</h2>
+                    <p id="mapSubtitle" class="text-sm text-slate-600 mt-0.5">--</p>
+                    <div class="flex items-center gap-3 mt-1.5 text-xs text-slate-500">
+                        <span id="mapDate">--</span>
+                        <span class="text-slate-300">|</span>
+                        <span id="mapSource">--</span>
+                    </div>
+                </div>
+                <img id="mapLogoImg" class="hidden h-12 max-w-[110px] object-contain shrink-0" src="" alt="Logo">
+            </div>
+
+            <div id="map" class="w-full h-full"></div>
+
+            <!-- Map Summary -->
+            <div class="absolute bottom-6 left-6 bg-white/95 backdrop-blur rounded-xl p-4 shadow-lg border border-slate-200 max-w-xs z-[1000]">
+                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Route Summary</p>
+                <div class="space-y-1">
+                    <div class="flex justify-between text-sm">
+                        <span class="text-slate-600">Total Distance:</span>
+                        <span class="font-semibold text-slate-800" id="totalDistance">--</span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-slate-600">Locations:</span>
+                        <span class="font-semibold text-slate-800" id="locationCount">--</span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-slate-600">Est. Drive Time:</span>
+                        <span class="font-semibold text-slate-800" id="estDriveTime">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Disclaimer -->
+            <div class="absolute bottom-6 right-6 bg-white/90 backdrop-blur rounded-lg p-3 shadow-lg border border-slate-200 max-w-[280px] z-[1000]">
+                <p class="text-[10px] text-slate-500 leading-relaxed">
+                    <span class="font-semibold">Disclaimer:</span> The boundaries and names shown and the designations used on this map do not imply official endorsement or acceptance by the United Nations.
+                </p>
+            </div>
+
+            <!-- Developer Credit -->
+            <div class="no-print absolute bottom-1 left-6 z-[999] select-none">
+                <p class="text-[10px] text-slate-400">Developed by <span class="font-semibold text-slate-500">Sabbir Hossain</span></p>
+            </div>
+
+            <!-- Loading overlays -->
+            <div id="loadingOverlay" class="absolute inset-0 bg-white/80 backdrop-blur flex items-center justify-center z-[2000] hidden">
+                <div class="text-center">
+                    <div class="w-10 h-10 border-4 border-teal-200 border-t-teal-600 rounded-full animate-spin mx-auto mb-3"></div>
+                    <p class="text-sm font-medium text-slate-600">Processing...</p>
+                </div>
+            </div>
+            <div id="osrmLoading" class="absolute top-20 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur rounded-full px-4 py-2 shadow-lg border border-slate-200 z-[1000] hidden">
+                <span class="spinner"></span>
+                <span class="text-sm text-slate-600">Fetching real road routes...</span>
+            </div>
+        </main>
+    </div>
+
+    <!-- Save Route Modal -->
+    <div id="saveModal" class="fixed inset-0 modal-overlay z-[3000] hidden flex items-center justify-center">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+            <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+                <h3 class="text-lg font-bold text-slate-800">Save Route</h3>
+                <button id="btnCloseSaveModal" class="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center transition">
+                    <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="p-5">
+                <p class="text-sm text-slate-600 mb-4">This route will be saved to your browser. You can share it with others using the generated link.</p>
+                <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                    <p class="text-xs text-amber-700 font-medium">⚠ Important: For permanent cross-device sharing, download the JSON file and add it to your GitHub repo in a <code>routes/</code> folder.</p>
+                </div>
+                <div class="flex gap-3">
+                    <button id="btnConfirmSave" class="flex-1 bg-teal-600 text-white py-2.5 rounded-lg font-semibold text-sm hover:bg-teal-700 transition">Save to Browser</button>
+                    <button id="btnDownloadJSON" class="flex-1 bg-slate-100 text-slate-700 py-2.5 rounded-lg font-semibold text-sm hover:bg-slate-200 transition">Download JSON</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Share Modal -->
+    <div id="shareModal" class="fixed inset-0 modal-overlay z-[3000] hidden flex items-center justify-center">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full mx-4 overflow-hidden">
+            <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+                <h3 class="text-lg font-bold text-slate-800">Share Route</h3>
+                <button id="btnCloseShareModal" class="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center transition">
+                    <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="p-5">
+                <div class="mb-4">
+                    <p class="text-sm font-semibold text-slate-700 mb-2">1. Browser Link (same device only)</p>
+                    <div class="share-link-box mb-2" id="shareLinkBox">--</div>
+                    <button id="btnCopyLink" class="w-full bg-teal-600 text-white py-2 rounded-lg font-semibold text-sm hover:bg-teal-700 transition flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                        </svg>
+                        Copy Link
+                    </button>
+                </div>
+                <div class="border-t border-slate-100 pt-4">
+                    <p class="text-sm font-semibold text-slate-700 mb-2">2. Permanent Share (GitHub)</p>
+                    <p class="text-xs text-slate-500 mb-3">Download the JSON file, add it to your GitHub repo's <code>routes/</code> folder, and share the direct raw GitHub URL.</p>
+                    <button id="btnDownloadShareJSON" class="w-full bg-slate-100 text-slate-700 py-2 rounded-lg font-semibold text-sm hover:bg-slate-200 transition flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                        </svg>
+                        Download JSON for GitHub
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF Preview Modal -->
+    <div id="pdfModal" class="fixed inset-0 modal-overlay z-[3000] hidden flex items-center justify-center">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full mx-4 overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="p-5 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <h3 class="text-lg font-bold text-slate-800">PDF Preview</h3>
+                <button id="btnClosePDFModal" class="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center transition">
+                    <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="flex-1 overflow-auto p-5 bg-slate-50">
+                <div id="pdfPreviewContainer" class="bg-white shadow-lg mx-auto" style="width: 210mm;">
+                    <!-- PDF content injected here -->
+                </div>
+            </div>
+            <div class="p-5 border-t border-slate-100 shrink-0 flex gap-3">
+                <button id="btnDownloadPDF" class="flex-1 bg-teal-600 text-white py-2.5 rounded-lg font-semibold text-sm hover:bg-teal-700 transition">Download PDF</button>
+                <button id="btnCancelPDF" class="px-6 bg-slate-100 text-slate-700 py-2.5 rounded-lg font-semibold text-sm hover:bg-slate-200 transition">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden export container for PNG capture -->
+    <div id="exportContainer" class="fixed top-0 left-0 w-[1200px] bg-white z-[-1] opacity-0 pointer-events-none">
+        <!-- Injected dynamically for clean PNG export -->
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
