@@ -73,6 +73,10 @@ Drop a logo image into the second drop zone in the sidebar (next to "Drop CSV fi
 
 The logo is also saved along with a route when you click **Save Current** or **Download JSON**, so it's restored automatically when the route is reloaded or shared.
 
+## 📖 User & Creator Guide
+
+A separate `guide.html` page (linked from the "Guide" button in the app header) covers step-by-step instructions for both map creators and route viewers, plus troubleshooting for common GitHub publishing errors. It's a standalone HTML file — edit its content anytime without touching `app.js`.
+
 ## 🚀 Deploy to GitHub Pages
 
 ### Step 1: Create Repository
@@ -85,6 +89,7 @@ The logo is also saved along with a route when you click **Save Current** or **D
 Upload to repo root:
 - `index.html`
 - `app.js`
+- `guide.html`
 - `README.md`
 
 ### Step 3: Enable Pages

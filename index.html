@@ -207,6 +207,55 @@
             100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); }
         }
         .user-location-dot.pulsing { animation: locationPulse 2s infinite; }
+
+        /* Mobile FAB + bottom sheet: hidden everywhere by default, only shown
+           via the mobile viewer-mode media query below */
+        #mobileInfoFab { display: none; }
+        .mobile-chevron { display: none; }
+
+        /* Compact overlays for Viewer Mode on small screens (tap-to-expand title,
+           Route Summary + Disclaimer collapsed into a bottom-sheet FAB).
+           Scoped to body.viewer-mode so Creator Mode is never affected. */
+        @media (max-width: 640px) {
+            body.viewer-mode #mapTitleOverlay {
+                top: 10px; left: 10px; right: 10px;
+                padding: 10px 12px;
+                border-radius: 12px;
+            }
+            body.viewer-mode #mapTitle {
+                font-size: 14px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            body.viewer-mode #mapTitleOverlay.expanded #mapTitle {
+                white-space: normal;
+            }
+            body.viewer-mode #mapTitleDetails {
+                display: none;
+            }
+            body.viewer-mode #mapTitleOverlay.expanded #mapTitleDetails {
+                display: block;
+                margin-top: 4px;
+            }
+            body.viewer-mode .mobile-chevron {
+                display: flex;
+            }
+            body.viewer-mode #mapTitleOverlay.expanded .mobile-chevron svg {
+                transform: rotate(180deg);
+            }
+            body.viewer-mode #mapLogoImg {
+                height: 30px !important;
+                max-width: 64px !important;
+            }
+            body.viewer-mode #routeSummaryCard,
+            body.viewer-mode #disclaimerCard {
+                display: none !important;
+            }
+            body.viewer-mode #mobileInfoFab {
+                display: flex;
+            }
+        }
         </style>
 </head>
 <body class="bg-slate-50 h-screen overflow-hidden flex flex-col">
@@ -226,6 +275,12 @@
         </div>
 
         <div class="flex items-center gap-3 no-print">
+            <a href="guide.html" target="_blank" rel="noopener" class="px-3 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition flex items-center gap-2" title="User &amp; Creator Guide">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                </svg>
+                Guide
+            </a>
             <button id="btnViewMode" class="px-4 py-2 bg-white/15 hover:bg-white/25 rounded-lg text-sm font-medium transition flex items-center gap-2 hidden">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z"/>
@@ -427,13 +482,22 @@
         <main class="flex-1 relative bg-slate-100">
             <!-- Map Title Overlay -->
             <div id="mapTitleOverlay" class="absolute top-4 left-4 right-32 bg-white/95 backdrop-blur rounded-xl p-4 shadow-lg border border-slate-200 z-[1000] flex items-center justify-between gap-4">
-                <div class="min-w-0">
-                    <h2 id="mapTitle" class="text-lg font-bold text-slate-800 leading-tight">--</h2>
-                    <p id="mapSubtitle" class="text-sm text-slate-600 mt-0.5">--</p>
-                    <div class="flex items-center gap-3 mt-1.5 text-xs text-slate-500">
-                        <span id="mapDate">--</span>
-                        <span class="text-slate-300">|</span>
-                        <span id="mapSource">--</span>
+                <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                        <h2 id="mapTitle" class="text-lg font-bold text-slate-800 leading-tight min-w-0">--</h2>
+                        <button id="btnToggleTitleDetails" class="mobile-chevron shrink-0 w-6 h-6 rounded-full hover:bg-slate-100 items-center justify-center text-slate-400">
+                            <svg class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="mapTitleDetails">
+                        <p id="mapSubtitle" class="text-sm text-slate-600 mt-0.5">--</p>
+                        <div class="flex items-center gap-3 mt-1.5 text-xs text-slate-500">
+                            <span id="mapDate">--</span>
+                            <span class="text-slate-300">|</span>
+                            <span id="mapSource">--</span>
+                        </div>
                     </div>
                 </div>
                 <img id="mapLogoImg" class="hidden h-12 max-w-[110px] object-contain shrink-0" src="" alt="Logo">
@@ -442,7 +506,7 @@
             <div id="map" class="w-full h-full"></div>
 
             <!-- Map Summary -->
-            <div class="absolute bottom-6 left-6 bg-white/95 backdrop-blur rounded-xl p-4 shadow-lg border border-slate-200 max-w-xs z-[1000]">
+            <div id="routeSummaryCard" class="absolute bottom-6 left-6 bg-white/95 backdrop-blur rounded-xl p-4 shadow-lg border border-slate-200 max-w-xs z-[1000]">
                 <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Route Summary</p>
                 <div class="space-y-1">
                     <div class="flex justify-between text-sm">
@@ -461,7 +525,7 @@
             </div>
 
             <!-- Disclaimer -->
-            <div class="absolute bottom-6 right-6 bg-white/90 backdrop-blur rounded-lg p-3 shadow-lg border border-slate-200 max-w-[280px] z-[1000]">
+            <div id="disclaimerCard" class="absolute bottom-6 right-6 bg-white/90 backdrop-blur rounded-lg p-3 shadow-lg border border-slate-200 max-w-[280px] z-[1000]">
                 <p class="text-[10px] text-slate-500 leading-relaxed">
                     <span class="font-semibold">Disclaimer:</span> The boundaries and names shown and the designations used on this map do not imply official endorsement or acceptance by the United Nations.
                 </p>
@@ -470,6 +534,27 @@
             <!-- Developer Credit -->
             <div class="no-print absolute bottom-1 left-6 z-[999] select-none">
                 <p class="text-[10px] text-slate-400">Developed by <span class="font-semibold text-slate-500">Sabbir Hossain</span></p>
+            </div>
+
+            <!-- Mobile viewer-mode info FAB (shows Route Summary + Disclaimer in a bottom sheet) -->
+            <button id="mobileInfoFab" class="absolute bottom-5 right-5 z-[1500] w-12 h-12 rounded-full bg-white shadow-lg border border-slate-200 items-center justify-center text-teal-700">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+            </button>
+
+            <!-- Mobile info bottom sheet -->
+            <div id="mobileInfoSheetBackdrop" class="hidden fixed inset-0 bg-black/40 z-[2500]"></div>
+            <div id="mobileInfoSheet" class="hidden fixed left-0 right-0 bottom-0 z-[2501] bg-white rounded-t-2xl shadow-2xl p-5 max-h-[70vh] overflow-y-auto">
+                <div class="flex items-center justify-between mb-3">
+                    <p class="text-sm font-bold text-slate-800">Route Details</p>
+                    <button id="btnCloseMobileSheet" class="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                <div id="mobileInfoSheetContent"></div>
             </div>
 
             <!-- Loading overlays -->

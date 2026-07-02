@@ -515,6 +515,28 @@ function updateUserLocationMarker(lat, lng, accuracy) {
 }
 
 // ============================================
+// MOBILE VIEWER LAYOUT (tap-to-expand title, Route Summary + Disclaimer sheet)
+// ============================================
+
+function toggleTitleDetails() {
+    document.getElementById('mapTitleOverlay').classList.toggle('expanded');
+}
+
+function openMobileInfoSheet() {
+    const summaryHtml = document.getElementById('routeSummaryCard').innerHTML;
+    const disclaimerHtml = document.getElementById('disclaimerCard').innerHTML;
+    document.getElementById('mobileInfoSheetContent').innerHTML =
+        summaryHtml + '<div class="border-t border-slate-100 my-3"></div>' + disclaimerHtml;
+    document.getElementById('mobileInfoSheetBackdrop').classList.remove('hidden');
+    document.getElementById('mobileInfoSheet').classList.remove('hidden');
+}
+
+function closeMobileInfoSheet() {
+    document.getElementById('mobileInfoSheetBackdrop').classList.add('hidden');
+    document.getElementById('mobileInfoSheet').classList.add('hidden');
+}
+
+// ============================================
 // SAVED ROUTES UI
 // ============================================
 
@@ -654,6 +676,7 @@ function renderViewerRoute(r) {
     document.getElementById('viewerPanel').classList.add('flex');
     document.getElementById('btnViewMode').classList.remove('hidden');
     document.getElementById('btnLoadSample').classList.add('hidden');
+    document.body.classList.add('viewer-mode');
 
     document.getElementById('viewerTitle').textContent = r.title || 'Untitled Route';
     document.getElementById('viewerSubtitle').textContent = r.subtitle || '';
@@ -772,6 +795,8 @@ async function publishRouteToGithub(routeData) {
 function exitViewerMode() {
     isViewerMode = false; currentRouteId = null;
     stopLocationTracking();
+    closeMobileInfoSheet();
+    document.body.classList.remove('viewer-mode');
     window.history.replaceState({}, document.title, window.location.pathname);
     document.getElementById('viewerPanel').classList.add('hidden');
     document.getElementById('viewerPanel').classList.remove('flex');
@@ -1085,7 +1110,8 @@ async function exportPNG() {
         wrapText(ctx, discText, pad, fy + 32, totalW - pad * 2, 18);
 
         const link = document.createElement('a');
-        link.download = `${title.replace(/\s+/g,'_').toLowerCase()}_map.png`;
+        const pngNameBase = subtitle ? slugify(subtitle) : slugify(title);
+        link.download = date ? `${pngNameBase}_${date}.png` : `${pngNameBase}.png`;
         link.href = canvas.toDataURL('image/png');
         link.click();
     } catch (err) {
@@ -1148,9 +1174,9 @@ async function exportPDF() {
         const previewHTML = `
             <div style="padding:0;font-family:Inter,sans-serif;color:#1e293b;width:210mm;">
                 <div style="background:linear-gradient(135deg,#0f766e 0%,#115e59 100%);color:white;padding:24px 30px;position:relative;">
-                    ${logoDataUrl?`<img src="${logoDataUrl}" style="position:absolute;top:18px;right:30px;max-height:50px;max-width:120px;object-fit:contain;background:white;padding:4px;border-radius:6px;">`:''}
-                    <h1 style="font-size:22px;font-weight:800;margin:0;letter-spacing:-0.5px;${logoDataUrl?'max-width:70%;':''}">${title}</h1>
-                    ${subtitle?`<p style="font-size:14px;margin:6px 0 0 0;opacity:0.9;${logoDataUrl?'max-width:70%;':''}">${subtitle}</p>`:''}
+                    ${logoDataUrl?`<img src="${logoDataUrl}" style="position:absolute;top:18px;right:30px;max-height:34px;max-width:80px;object-fit:contain;background:white;padding:4px;border-radius:6px;">`:''}
+                    <h1 style="font-size:22px;font-weight:800;margin:0;letter-spacing:-0.5px;${logoDataUrl?'max-width:82%;':''}">${title}</h1>
+                    ${subtitle?`<p style="font-size:14px;margin:6px 0 0 0;opacity:0.9;${logoDataUrl?'max-width:82%;':''}">${subtitle}</p>`:''}
                     <p style="font-size:12px;margin:8px 0 0 0;opacity:0.7;">${fmtDate(date)}</p>
                 </div>
 
@@ -1214,7 +1240,11 @@ async function exportPDF() {
 function downloadPDF() {
     const { jsPDF } = window.jspdf;
     const title = document.getElementById('routeTitle').value.trim() || 'Visit Route Map';
+    const subtitle = document.getElementById('routeSubtitle').value.trim();
+    const date = document.getElementById('routeDate').value;
     const element = document.getElementById('pdfPreviewContainer');
+
+    showLoading(true);
 
     html2canvas(element, { scale: 2, useCORS: true }).then(canvas => {
         const imgData = canvas.toDataURL('image/png');
@@ -1232,8 +1262,15 @@ function downloadPDF() {
             pdf.addImage(imgData, 'PNG', 0, pos, imgW, imgH);
             hLeft -= pageH;
         }
-        pdf.save(`${title.replace(/\s+/g,'_').toLowerCase()}_route.pdf`);
+        const pdfNameBase = subtitle ? slugify(subtitle) : slugify(title);
+        const pdfName = date ? `${pdfNameBase}_${date}.pdf` : `${pdfNameBase}.pdf`;
+        pdf.save(pdfName);
         document.getElementById('pdfModal').classList.add('hidden');
+        showLoading(false);
+    }).catch(err => {
+        console.error('PDF download error:', err);
+        alert('PDF download failed. Please try again.');
+        showLoading(false);
     });
 }
 
@@ -1451,6 +1488,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Live location tracking (viewer mode)
     document.getElementById('btnTrackLocation').addEventListener('click', toggleLocationTracking);
+
+    // Mobile viewer layout: tap-to-expand title, Route Summary/Disclaimer sheet
+    document.getElementById('btnToggleTitleDetails').addEventListener('click', toggleTitleDetails);
+    document.getElementById('mobileInfoFab').addEventListener('click', openMobileInfoSheet);
+    document.getElementById('btnCloseMobileSheet').addEventListener('click', closeMobileInfoSheet);
+    document.getElementById('mobileInfoSheetBackdrop').addEventListener('click', closeMobileInfoSheet);
 
     // PDF modal
     document.getElementById('btnClosePDFModal').addEventListener('click', () => document.getElementById('pdfModal').classList.add('hidden'));
