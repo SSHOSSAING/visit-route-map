@@ -68,6 +68,42 @@ function buildShareLink(routeId) {
 // MAP
 // ============================================
 
+// ============================================
+// MOBILE DETECTION & RESPONSIVE HELPERS
+// ============================================
+
+function isMobileDevice() {
+    return window.innerWidth <= 768 ||
+           /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
+function isSmallMobile() {
+    return window.innerWidth <= 480;
+}
+
+function applyMobileLayout() {
+    // Hide sidebar on mobile
+    const sidebar = document.getElementById('sidebar');
+    const toggleBtn = document.getElementById('sidebarToggleBtn');
+    if (sidebar && isMobileDevice()) {
+        sidebar.classList.add('hidden');
+        sidebar.classList.remove('flex');
+        if (toggleBtn) toggleBtn.style.display = 'none';
+    }
+
+    // Ensure map fits viewport
+    const mapEl = document.getElementById('map');
+    if (mapEl && isMobileDevice()) {
+        mapEl.style.width = '100vw';
+        mapEl.style.maxWidth = '100vw';
+    }
+
+    // Invalidate map size after layout change
+    if (map) {
+        setTimeout(() => map.invalidateSize({ animate: false }), 100);
+    }
+}
+
 function initMap() {
     map = L.map('map', {
         zoomControl: false,
@@ -87,6 +123,30 @@ function initMap() {
     });
     L.control.layers({ 'Street Map': street, 'Satellite': sat }, null, { position: 'topright' }).addTo(map);
     street.addTo(map);
+
+    // Square "Track My Location" button, styled like a Leaflet control button.
+    // Stacks automatically below zoom/layers in the top-right corner.
+    // Hidden by default; shown only in Viewer Mode on mobile screens (see CSS).
+    const LocationControl = L.Control.extend({
+        options: { position: 'topright' },
+        onAdd: function() {
+            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control mobile-location-control');
+            container.style.marginTop = '8px';
+            container.innerHTML = `<a href="#" id="mobileLocationBtn" title="Track My Location" role="button" style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;color:#334155;">
+                <svg width="17" height="17" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+                </svg>
+            </a>`;
+            L.DomEvent.disableClickPropagation(container);
+            L.DomEvent.on(container.querySelector('a'), 'click', function(e) {
+                L.DomEvent.preventDefault(e);
+                toggleLocationTracking();
+            });
+            return container;
+        }
+    });
+    new LocationControl().addTo(map);
 }
 
 // ============================================
@@ -464,6 +524,8 @@ function toggleLocationTracking() {
                 document.getElementById('trackLocationLabel').textContent = 'Stop Tracking';
                 btn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
                 btn.classList.add('bg-red-500', 'hover:bg-red-600');
+                const mobileBtn = document.getElementById('mobileLocationBtn');
+                if (mobileBtn) mobileBtn.style.color = '#dc2626';
             }
             status.textContent = `Live — accuracy ±${Math.round(pos.coords.accuracy)}m`;
             updateUserLocationMarker(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
@@ -489,6 +551,8 @@ function stopLocationTracking() {
         btn.classList.remove('bg-red-500', 'hover:bg-red-600');
         btn.classList.add('bg-blue-600', 'hover:bg-blue-700');
     }
+    const mobileBtn = document.getElementById('mobileLocationBtn');
+    if (mobileBtn) mobileBtn.style.color = '#334155';
     if (status) status.classList.add('hidden');
 
     if (userLocationMarker) { map.removeLayer(userLocationMarker); userLocationMarker = null; }
@@ -1157,71 +1221,141 @@ async function exportPDF() {
     try {
         const mapCanvas = await captureMapForExport();
 
+        // ── Intelligent Dynamic Scaling ────────────────────────────────
+        // A4 page = 210mm × 297mm. We allocate fixed space for header,
+        // footer, summary, and table header. The remaining space is shared
+        // between the map image and the data rows.
+        //
+        // Strategy:
+        // 1. Compute a "content budget" in mm.
+        // 2. Derive row height from the number of visits.
+        // 3. Derive map height from whatever is left.
+        // 4. Clamp everything so fonts never go below readable minimums.
+        // ────────────────────────────────────────────────────────────────
+
+        const PAGE_W = 210;
+        const PAGE_H = 297;
+        const MARGIN_X = 10;           // left/right page margin
+        const HEADER_H = 28;             // teal gradient header
+        const FOOTER_H = 22;             // disclaimer + credits
+        const SUMMARY_H = 18;            // 3-column stats bar
+        const TABLE_HEAD_H = 8;          // table header row
+        const GAP = 3;                   // gap between sections
+
+        const n = visitData.length;
+
+        // ── 1. Row-height budget ───────────────────────────────────────
+        // We want every row visible.  We start with a generous row height
+        // and shrink it as the visit count grows, but never below 4.5 mm
+        // (≈ 12 px @ 96 dpi) so text stays readable.
+        let rowH;
+        if (n <= 6)       rowH = 9.0;
+        else if (n <= 10) rowH = 7.0;
+        else if (n <= 18) rowH = 5.5;
+        else if (n <= 30) rowH = 4.8;
+        else              rowH = 4.5;   // absolute floor
+
+        const tableBodyH = n * rowH;
+        const tableTotalH = TABLE_HEAD_H + tableBodyH;
+
+        // ── 2. Map height = whatever space is left ────────────────────
+        const fixedH = HEADER_H + FOOTER_H + SUMMARY_H + tableTotalH + (GAP * 4);
+        let mapH = PAGE_H - fixedH;
+
+        // Floor the map so it is never microscopic
+        const MIN_MAP_H = 35;
+        if (mapH < MIN_MAP_H) {
+            mapH = MIN_MAP_H;
+        }
+        // Ceiling the map so the table never vanishes
+        const MAX_MAP_H = 140;
+        if (mapH > MAX_MAP_H) mapH = MAX_MAP_H;
+
+        // ── 3. Font sizes derived from row height ───────────────────────
+        const bodyFont = Math.max(7, Math.min(11, Math.round(rowH * 1.9)));
+        const subFont  = Math.max(6.5, bodyFont - 1);
+        const headFont = Math.max(6.5, Math.min(9, bodyFont - 0.5));
+        const sumFont  = Math.max(9, Math.min(16, Math.round(mapH * 0.12)));
+
+        // ── 4. Padding derived from row height ─────────────────────────
+        const vPad = Math.max(1, Math.min(4, Math.round((rowH - bodyFont * 0.35) / 2)));
+        const hPad = 5;
+        const rowPad = `${vPad}px ${hPad}px`;
+        const headPad = `${vPad}px ${hPad}px`;
+        const sumPad = `${Math.max(4, Math.min(10, Math.round(mapH * 0.04)))}px`;
+
+        // ── 5. Build table rows ─────────────────────────────────────────
         let visitsHTML = '';
         visitData.forEach((item, i) => {
             const num = parseInt(item.Sl) || (i+1);
             visitsHTML += `
                 <tr style="border-bottom:1px solid #e2e8f0;">
-                    <td style="padding:10px 8px;font-size:12px;font-weight:700;color:#0d9488;width:30px;">${num}</td>
-                    <td style="padding:10px 8px;font-size:12px;color:#1e293b;font-weight:600;">${clean(item.Activity)||'--'}</td>
-                    <td style="padding:10px 8px;font-size:11px;color:#475569;">${clean(item.Time)||'--'}</td>
-                    <td style="padding:10px 8px;font-size:11px;color:#475569;">${clean(item.Duration)||'--'}</td>
-                    <td style="padding:10px 8px;font-size:11px;color:#475569;">${clean(item.Camp)||'--'}</td>
-                    <td style="padding:10px 8px;font-size:11px;color:#475569;">${clean(item.Agency)||'--'}</td>
+                    <td style="padding:${rowPad};font-size:${bodyFont}px;font-weight:700;color:#0d9488;width:22px;vertical-align:top;">${num}</td>
+                    <td style="padding:${rowPad};font-size:${bodyFont}px;color:#1e293b;font-weight:600;vertical-align:top;">${escapeHtml(clean(item.Activity))||'--'}</td>
+                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;white-space:nowrap;">${escapeHtml(clean(item.Time))||'--'}</td>
+                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;white-space:nowrap;">${escapeHtml(clean(item.Duration))||'--'}</td>
+                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;">${escapeHtml(clean(item.Camp))||'--'}</td>
+                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;">${escapeHtml(clean(item.Agency))||'--'}</td>
                 </tr>`;
         });
 
+        // ── 6. Assemble preview HTML ────────────────────────────────────
         const previewHTML = `
-            <div style="padding:0;font-family:Inter,sans-serif;color:#1e293b;width:210mm;">
-                <div style="background:linear-gradient(135deg,#0f766e 0%,#115e59 100%);color:white;padding:24px 30px;position:relative;">
-                    ${logoDataUrl?`<img src="${logoDataUrl}" style="position:absolute;top:18px;right:30px;max-height:34px;max-width:80px;object-fit:contain;background:white;padding:4px;border-radius:6px;">`:''}
-                    <h1 style="font-size:22px;font-weight:800;margin:0;letter-spacing:-0.5px;${logoDataUrl?'max-width:82%;':''}">${title}</h1>
-                    ${subtitle?`<p style="font-size:14px;margin:6px 0 0 0;opacity:0.9;${logoDataUrl?'max-width:82%;':''}">${subtitle}</p>`:''}
-                    <p style="font-size:12px;margin:8px 0 0 0;opacity:0.7;">${fmtDate(date)}</p>
+            <div id="pdfExportRoot" style="padding:0;font-family:Inter,system-ui,-apple-system,sans-serif;color:#1e293b;width:${PAGE_W}mm;box-sizing:border-box;">
+                <!-- Header -->
+                <div style="background:linear-gradient(135deg,#0f766e 0%,#115e59 100%);color:white;padding:10px ${MARGIN_X}mm;position:relative;height:${HEADER_H}mm;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;">
+                    ${logoDataUrl?`<img src="${logoDataUrl}" style="position:absolute;top:8px;right:${MARGIN_X}mm;max-height:22px;max-width:60px;object-fit:contain;background:white;padding:2px 4px;border-radius:4px;">`:''}
+                    <h1 style="font-size:15px;font-weight:800;margin:0;letter-spacing:-0.3px;line-height:1.2;${logoDataUrl?'max-width:78%;':''}">${escapeHtml(title)}</h1>
+                    ${subtitle?`<p style="font-size:10px;margin:3px 0 0 0;opacity:0.9;line-height:1.2;${logoDataUrl?'max-width:78%;':''}">${escapeHtml(subtitle)}</p>`:''}
+                    <p style="font-size:8px;margin:4px 0 0 0;opacity:0.7;">${fmtDate(date)}</p>
                 </div>
 
-                <div style="padding:20px 30px;background:#f8fafc;">
-                    <img src="${mapCanvas.toDataURL('image/png')}" style="width:100%;border-radius:8px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.05);display:block;">
+                <!-- Map -->
+                <div style="padding:${sumPad} ${MARGIN_X}mm 0;background:#f8fafc;">
+                    <img src="${mapCanvas.toDataURL('image/png')}" style="width:100%;height:${mapH}mm;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;display:block;">
                 </div>
 
-                <div style="display:flex;gap:16px;margin:0 30px 20px;padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;">
+                <!-- Summary Stats -->
+                <div style="display:flex;gap:8px;margin:${sumPad} ${MARGIN_X}mm;padding:${sumPad};background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;box-sizing:border-box;">
                     <div style="flex:1;text-align:center;">
-                        <p style="font-size:20px;font-weight:700;color:#0d9488;margin:0;">${locCount}</p>
-                        <p style="font-size:11px;color:#64748b;margin:4px 0 0 0;">Locations</p>
+                        <p style="font-size:${sumFont}px;font-weight:700;color:#0d9488;margin:0;line-height:1;">${locCount}</p>
+                        <p style="font-size:8px;color:#64748b;margin:2px 0 0 0;">Locations</p>
                     </div>
                     <div style="flex:1;text-align:center;border-left:1px solid #e2e8f0;">
-                        <p style="font-size:20px;font-weight:700;color:#0d9488;margin:0;">${totalDist}</p>
-                        <p style="font-size:11px;color:#64748b;margin:4px 0 0 0;">Total Distance</p>
+                        <p style="font-size:${sumFont}px;font-weight:700;color:#0d9488;margin:0;line-height:1;">${totalDist}</p>
+                        <p style="font-size:8px;color:#64748b;margin:2px 0 0 0;">Total Distance</p>
                     </div>
                     <div style="flex:1;text-align:center;border-left:1px solid #e2e8f0;">
-                        <p style="font-size:20px;font-weight:700;color:#0d9488;margin:0;">${driveTime}</p>
-                        <p style="font-size:11px;color:#64748b;margin:4px 0 0 0;">Est. Drive Time</p>
+                        <p style="font-size:${sumFont}px;font-weight:700;color:#0d9488;margin:0;line-height:1;">${driveTime}</p>
+                        <p style="font-size:8px;color:#64748b;margin:2px 0 0 0;">Est. Drive Time</p>
                     </div>
                 </div>
 
-                <div style="padding:0 30px 20px;">
-                    <h2 style="font-size:16px;font-weight:700;color:#0f766e;margin:0 0 12px 0;padding-bottom:8px;border-bottom:2px solid #0d9488;">Visit Schedule</h2>
-                    <table style="width:100%;border-collapse:collapse;">
+                <!-- Visit Schedule Table -->
+                <div style="padding:0 ${MARGIN_X}mm ${sumPad};">
+                    <h2 style="font-size:10px;font-weight:700;color:#0f766e;margin:0 0 4px 0;padding-bottom:3px;border-bottom:1.5px solid #0d9488;text-transform:uppercase;letter-spacing:0.5px;">Visit Schedule</h2>
+                    <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
                         <thead>
                             <tr style="background:#f0fdfa;">
-                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">#</th>
-                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">Activity</th>
-                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">Time</th>
-                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">Duration</th>
-                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">Camp</th>
-                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">Agency</th>
+                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;width:22px;">#</th>
+                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Activity</th>
+                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;width:50px;">Time</th>
+                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;width:45px;">Dur.</th>
+                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Camp</th>
+                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Agency</th>
                             </tr>
                         </thead>
                         <tbody>${visitsHTML}</tbody>
                     </table>
                 </div>
 
-                <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:16px 30px;">
-                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 0 8px 0;">
-                        <p style="font-size:10px;color:#94a3b8;margin:0;">Created on: ${created}  ||  Data source: ${source}</p>
-                        <p style="font-size:9px;color:#94a3b8;margin:0;">Developed by Sabbir Hossain</p>
+                <!-- Footer -->
+                <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:6px ${MARGIN_X}mm;box-sizing:border-box;">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 0 3px 0;">
+                        <p style="font-size:7px;color:#94a3b8;margin:0;">Created: ${created} &nbsp;|&nbsp; Source: ${escapeHtml(source)}</p>
+                        <p style="font-size:7px;color:#94a3b8;margin:0;">Developed by Sabbir Hossain</p>
                     </div>
-                    <div style="font-size:9px;color:#64748b;line-height:1.5;border-left:3px solid #0d9488;padding-left:10px;background:#f0fdfa;padding:8px 12px;border-radius:0 6px 6px 0;">
+                    <div style="font-size:7px;color:#64748b;line-height:1.3;border-left:2px solid #0d9488;padding-left:6px;background:#f0fdfa;padding:3px 6px;border-radius:0 4px 4px 0;">
                         <strong>Disclaimer:</strong> The boundaries and names shown and the designations used on this map do not imply official endorsement or acceptance by the United Nations.
                     </div>
                 </div>
@@ -1237,6 +1371,12 @@ async function exportPDF() {
     }
 }
 
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 function downloadPDF() {
     const { jsPDF } = window.jspdf;
     const title = document.getElementById('routeTitle').value.trim() || 'Visit Route Map';
@@ -1246,22 +1386,51 @@ function downloadPDF() {
 
     showLoading(true);
 
-    html2canvas(element, { scale: 2, useCORS: true }).then(canvas => {
-        const imgData = canvas.toDataURL('image/png');
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        const imgW = 210;
-        const pageH = 297;
-        const imgH = (canvas.height * imgW) / canvas.width;
-        let hLeft = imgH, pos = 0;
-
-        pdf.addImage(imgData, 'PNG', 0, pos, imgW, imgH);
-        hLeft -= pageH;
-        while (hLeft > 0) {
-            pos = hLeft - imgH;
-            pdf.addPage();
-            pdf.addImage(imgData, 'PNG', 0, pos, imgW, imgH);
-            hLeft -= pageH;
+    html2canvas(element, {
+        scale: 2.5,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+        imageTimeout: 0,
+        onclone: (clonedDoc) => {
+            const root = clonedDoc.getElementById('pdfExportRoot');
+            if (root) {
+                root.style.width = '210mm';
+                root.style.maxWidth = '210mm';
+                root.style.overflow = 'hidden';
+            }
         }
+    }).then(canvas => {
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const pageW = 210, pageH = 297;
+
+        // Calculate image dimensions to fit exactly within A4
+        const imgRatio = canvas.width / canvas.height;
+        const pageRatio = pageW / pageH;
+
+        let imgW, imgH, x, y;
+
+        if (imgRatio > pageRatio) {
+            // Image is wider relative to page — fit to width
+            imgW = pageW;
+            imgH = imgW / imgRatio;
+            x = 0;
+            y = (pageH - imgH) / 2;
+        } else {
+            // Image is taller relative to page — fit to height
+            imgH = pageH;
+            imgW = imgH * imgRatio;
+            x = (pageW - imgW) / 2;
+            y = 0;
+        }
+
+        // Ensure we never exceed page bounds (safety clamp)
+        if (imgW > pageW) { imgW = pageW; imgH = imgW / imgRatio; x = 0; y = (pageH - imgH) / 2; }
+        if (imgH > pageH) { imgH = pageH; imgW = imgH * imgRatio; y = 0; x = (pageW - imgW) / 2; }
+
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', x, y, imgW, imgH);
+
         const pdfNameBase = subtitle ? slugify(subtitle) : slugify(title);
         const pdfName = date ? `${pdfNameBase}_${date}.pdf` : `${pdfNameBase}.pdf`;
         pdf.save(pdfName);
@@ -1273,7 +1442,6 @@ function downloadPDF() {
         showLoading(false);
     });
 }
-
 // ============================================
 // SAMPLE DATA
 // ============================================
@@ -1507,5 +1675,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    applyMobileLayout();
+    window.addEventListener('resize', () => {
+        if (map) setTimeout(() => map.invalidateSize({ animate: false }), 150);
+    });
     setTimeout(loadSampleData, 500);
 });
