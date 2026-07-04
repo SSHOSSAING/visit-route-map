@@ -1,4 +1,4 @@
-// Visit Route Map - Final v7.1 (Fixed: Numbered markers in both interactive and export)
+// Visit Route Map - Final v7.2 (Fixed: PDF table columns + Show Route zoom fit)
 // ================================================================================================
 // FIX: Use L.divIcon markers for interactive (visible numbers) + manual canvas draw for export
 
@@ -111,6 +111,11 @@ function toggleRouteHighlight() {
             btn.style.background = '#dc2626';
             btn.style.color = 'white';
             btn.style.borderColor = '#dc2626';
+        }
+        // Zoom to fit all route lines
+        if (routeLines.length > 0) {
+            const group = L.featureGroup(routeLines);
+            map.fitBounds(group.getBounds(), { padding: [60, 60], maxZoom: 16 });
         }
     } else {
         // Restore original route line styles
@@ -1387,12 +1392,12 @@ async function exportPDF() {
             const num = parseInt(item.Sl) || (i+1);
             visitsHTML += `
                 <tr style="border-bottom:1px solid #e2e8f0;">
-                    <td style="padding:${rowPad};font-size:${bodyFont}px;font-weight:700;color:#0d9488;width:22px;vertical-align:top;">${num}</td>
-                    <td style="padding:${rowPad};font-size:${bodyFont}px;color:#1e293b;font-weight:600;vertical-align:top;">${escapeHtml(clean(item.Activity))||'--'}</td>
-                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;white-space:nowrap;">${escapeHtml(clean(item.Time))||'--'}</td>
-                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;white-space:nowrap;">${escapeHtml(clean(item.Duration))||'--'}</td>
-                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;">${escapeHtml(clean(item.Camp))||'--'}</td>
-                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;">${escapeHtml(clean(item.Agency))||'--'}</td>
+                    <td style="padding:${rowPad};font-size:${bodyFont}px;font-weight:700;color:#0d9488;vertical-align:top;text-align:center;">${num}</td>
+                    <td style="padding:${rowPad};font-size:${bodyFont}px;color:#1e293b;font-weight:600;vertical-align:top;word-break:break-word;">${escapeHtml(clean(item.Activity))||'--'}</td>
+                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(clean(item.Time))||'--'}</td>
+                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(clean(item.Duration))||'--'}</td>
+                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(clean(item.Camp))||'--'}</td>
+                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(clean(item.Agency))||'--'}</td>
                 </tr>`;
         });
 
@@ -1437,12 +1442,20 @@ async function exportPDF() {
                 <div style="padding:0 ${MARGIN_X}mm ${sumPad};">
                     <h2 style="font-size:10px;font-weight:700;color:#0f766e;margin:0 0 4px 0;padding-bottom:3px;border-bottom:1.5px solid #0d9488;text-transform:uppercase;letter-spacing:0.5px;">Visit Schedule</h2>
                     <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+                        <colgroup>
+                            <col style="width:5%;">
+                            <col style="width:30%;">
+                            <col style="width:20%;">
+                            <col style="width:15%;">
+                            <col style="width:15%;">
+                            <col style="width:15%;">
+                        </colgroup>
                         <thead>
                             <tr style="background:#f0fdfa;">
-                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;width:22px;">#</th>
+                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">#</th>
                                 <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Activity</th>
-                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;width:50px;">Time</th>
-                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;width:45px;">Dur.</th>
+                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Time</th>
+                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Dur.</th>
                                 <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Camp</th>
                                 <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Agency</th>
                             </tr>
@@ -1506,30 +1519,32 @@ function downloadPDF() {
     }).then(canvas => {
         const pdf = new jsPDF('p', 'mm', 'a4');
         const pageW = 210, pageH = 297;
+        const marginTop = 0.5, marginBottom = 0.5;
+        const contentH = pageH - marginTop - marginBottom;
 
-        // Calculate image dimensions to fit exactly within A4
+        // Calculate image dimensions to fit within content area (with 0.5mm top/bottom margins)
         const imgRatio = canvas.width / canvas.height;
-        const pageRatio = pageW / pageH;
+        const contentRatio = pageW / contentH;
 
         let imgW, imgH, x, y;
 
-        if (imgRatio > pageRatio) {
-            // Image is wider relative to page — fit to width
+        if (imgRatio > contentRatio) {
+            // Image is wider relative to content area — fit to width
             imgW = pageW;
             imgH = imgW / imgRatio;
             x = 0;
-            y = (pageH - imgH) / 2;
+            y = marginTop + (contentH - imgH) / 2;
         } else {
-            // Image is taller relative to page — fit to height
-            imgH = pageH;
+            // Image is taller relative to content area — fit to height
+            imgH = contentH;
             imgW = imgH * imgRatio;
             x = (pageW - imgW) / 2;
-            y = 0;
+            y = marginTop;
         }
 
-        // Ensure we never exceed page bounds (safety clamp)
-        if (imgW > pageW) { imgW = pageW; imgH = imgW / imgRatio; x = 0; y = (pageH - imgH) / 2; }
-        if (imgH > pageH) { imgH = pageH; imgW = imgH * imgRatio; y = 0; x = (pageW - imgW) / 2; }
+        // Ensure we never exceed content bounds (safety clamp)
+        if (imgW > pageW) { imgW = pageW; imgH = imgW / imgRatio; x = 0; y = marginTop + (contentH - imgH) / 2; }
+        if (imgH > contentH) { imgH = contentH; imgW = imgH * imgRatio; y = marginTop; x = (pageW - imgW) / 2; }
 
         pdf.addImage(canvas.toDataURL('image/png'), 'PNG', x, y, imgW, imgH);
 
