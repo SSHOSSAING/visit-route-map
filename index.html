@@ -212,7 +212,7 @@
            via the mobile viewer-mode media query below */
         #mobileInfoFab { display: none; }
         .mobile-chevron { display: none; }
-        .mobile-location-control { display: none; }
+        .mobile-location-control, .show-route-control { display: none; }
 
         /* ================================================================
            MOBILE RESPONSIVE STYLES
@@ -382,6 +382,9 @@
 
             /* Track My Location as square map control, stacked under zoom/layers */
             body.viewer-mode .mobile-location-control {
+                display: block !important;
+            }
+            body.viewer-mode .show-route-control {
                 display: block !important;
             }
         }

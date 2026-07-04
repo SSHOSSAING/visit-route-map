@@ -91,6 +91,48 @@ function applyMobileLayout() {
         if (toggleBtn) toggleBtn.style.display = 'none';
     }
 
+function toggleRouteHighlight() {
+    routeHighlightActive = !routeHighlightActive;
+    const btn = document.getElementById('mobileShowRouteBtn');
+
+    if (routeHighlightActive) {
+        // Highlight: make route lines thicker and more prominent
+        routeLines.forEach(line => {
+            line.setStyle({
+                weight: 6,
+                opacity: 1,
+                color: '#dc2626'
+            });
+        });
+        // Bring route lines to front
+        routeLines.forEach(line => line.bringToFront());
+        // Update button state
+        if (btn) {
+            btn.style.background = '#dc2626';
+            btn.style.color = 'white';
+            btn.style.borderColor = '#dc2626';
+        }
+    } else {
+        // Restore original route line styles
+        routeLines.forEach((line, i) => {
+            // Re-render to restore original styles (real road vs direct line)
+            const isReal = !line.options.dashArray;
+            line.setStyle({
+                weight: isReal ? 4 : 2,
+                opacity: 0.9,
+                color: isReal ? '#0d9488' : '#94a3b8'
+            });
+        });
+        // Update button state
+        if (btn) {
+            btn.style.background = '';
+            btn.style.color = '#334155';
+            btn.style.borderColor = '';
+        }
+    }
+}
+
+
     // Ensure map fits viewport
     const mapEl = document.getElementById('map');
     if (mapEl && isMobileDevice()) {
@@ -147,6 +189,31 @@ function initMap() {
         }
     });
     new LocationControl().addTo(map);
+
+    // Show Visit Route toggle control (mobile viewer mode)
+    let routeHighlightActive = false;
+    let routeHighlightLines = [];
+
+    const ShowRouteControl = L.Control.extend({
+        options: { position: 'topright' },
+        onAdd: function() {
+            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control show-route-control');
+            container.style.marginTop = '8px';
+            container.innerHTML = `<a href="#" id="mobileShowRouteBtn" title="Show Visit Route" role="button" style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;color:#334155;">
+                <svg width="17" height="17" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0121 18.382V7.618a1 1 0 01-.447-.894L15 7m0 13V7"/>
+                </svg>
+            </a>`;
+            L.DomEvent.disableClickPropagation(container);
+            L.DomEvent.on(container.querySelector('a'), 'click', function(e) {
+                L.DomEvent.preventDefault(e);
+                toggleRouteHighlight();
+            });
+            return container;
+        }
+    });
+    new ShowRouteControl().addTo(map);
+
 }
 
 // ============================================
@@ -1226,11 +1293,10 @@ async function exportPDF() {
         // footer, summary, and table header. The remaining space is shared
         // between the map image and the data rows.
         //
-        // Strategy:
-        // 1. Compute a "content budget" in mm.
-        // 2. Derive row height from the number of visits.
-        // 3. Derive map height from whatever is left.
-        // 4. Clamp everything so fonts never go below readable minimums.
+        // CRITICAL FIX: Map aspect ratio is preserved. The map container
+        // uses the captured canvas's natural aspect ratio. The container
+        // height is calculated proportionally from the canvas dimensions,
+        // never by forcing a fixed height that would distort the image.
         // ────────────────────────────────────────────────────────────────
 
         const PAGE_W = 210;
@@ -1241,13 +1307,11 @@ async function exportPDF() {
         const SUMMARY_H = 18;            // 3-column stats bar
         const TABLE_HEAD_H = 8;          // table header row
         const GAP = 3;                   // gap between sections
+        const CONTENT_W = PAGE_W - (MARGIN_X * 2);  // usable content width
 
         const n = visitData.length;
 
         // ── 1. Row-height budget ───────────────────────────────────────
-        // We want every row visible.  We start with a generous row height
-        // and shrink it as the visit count grows, but never below 4.5 mm
-        // (≈ 12 px @ 96 dpi) so text stays readable.
         let rowH;
         if (n <= 6)       rowH = 9.0;
         else if (n <= 10) rowH = 7.0;
@@ -1258,33 +1322,66 @@ async function exportPDF() {
         const tableBodyH = n * rowH;
         const tableTotalH = TABLE_HEAD_H + tableBodyH;
 
-        // ── 2. Map height = whatever space is left ────────────────────
+        // ── 2. Map height: preserve aspect ratio ──────────────────────
+        // Calculate the map's natural proportional height based on the
+        // captured canvas dimensions and the PDF content width.
+        const canvasRatio = mapCanvas.height / mapCanvas.width;  // h/w
+        const naturalMapH = CONTENT_W * canvasRatio;              // proportional height in mm
+
+        // ── 3. Content budget check ───────────────────────────────────
         const fixedH = HEADER_H + FOOTER_H + SUMMARY_H + tableTotalH + (GAP * 4);
-        let mapH = PAGE_H - fixedH;
+        const availableForMap = PAGE_H - fixedH;
 
-        // Floor the map so it is never microscopic
-        const MIN_MAP_H = 35;
-        if (mapH < MIN_MAP_H) {
-            mapH = MIN_MAP_H;
+        // If natural height fits, use it. If not, squeeze OTHER elements
+        // (reduce summary padding, shrink table more, reduce gaps) rather
+        // than distorting the map.
+        let mapH, usedMapH;
+        if (naturalMapH <= availableForMap) {
+            // Natural height fits — use it for perfect aspect ratio
+            mapH = naturalMapH;
+            usedMapH = mapH;
+        } else {
+            // Natural height exceeds available space. We MUST keep aspect ratio,
+            // so we squeeze the non-map elements instead.
+            // Strategy: reduce row height further, shrink gaps, compress summary.
+            let squeezedRowH = rowH;
+            let squeezedGap = GAP;
+            let squeezedSumH = SUMMARY_H;
+
+            // Iteratively squeeze until map fits or we hit floors
+            while (naturalMapH > (PAGE_H - (HEADER_H + FOOTER_H + squeezedSumH + (TABLE_HEAD_H + n * squeezedRowH) + (squeezedGap * 4)))) {
+                if (squeezedRowH > 4.0) { squeezedRowH -= 0.2; continue; }
+                if (squeezedGap > 1) { squeezedGap -= 0.5; continue; }
+                if (squeezedSumH > 12) { squeezedSumH -= 1; continue; }
+                break; // can't squeeze any more
+            }
+
+            // Recalculate with squeezed values
+            rowH = squeezedRowH;
+            const squeezedTableH = TABLE_HEAD_H + (n * rowH);
+            const squeezedFixedH = HEADER_H + FOOTER_H + squeezedSumH + squeezedTableH + (squeezedGap * 4);
+            mapH = PAGE_H - squeezedFixedH;
+
+            // Absolute safety: if still negative, clamp to minimum and let
+            // downloadPDF's uniform scale handle the rest
+            if (mapH < 25) mapH = 25;
+            usedMapH = mapH;
         }
-        // Ceiling the map so the table never vanishes
-        const MAX_MAP_H = 140;
-        if (mapH > MAX_MAP_H) mapH = MAX_MAP_H;
 
-        // ── 3. Font sizes derived from row height ───────────────────────
+        // ── 4. Font sizes derived from row height ───────────────────────
         const bodyFont = Math.max(7, Math.min(11, Math.round(rowH * 1.9)));
         const subFont  = Math.max(6.5, bodyFont - 1);
         const headFont = Math.max(6.5, Math.min(9, bodyFont - 0.5));
-        const sumFont  = Math.max(9, Math.min(16, Math.round(mapH * 0.12)));
+        const sumFont  = Math.max(9, Math.min(16, Math.round(usedMapH * 0.12)));
 
-        // ── 4. Padding derived from row height ─────────────────────────
+        // ── 5. Padding derived from row height ─────────────────────────
         const vPad = Math.max(1, Math.min(4, Math.round((rowH - bodyFont * 0.35) / 2)));
         const hPad = 5;
         const rowPad = `${vPad}px ${hPad}px`;
         const headPad = `${vPad}px ${hPad}px`;
-        const sumPad = `${Math.max(4, Math.min(10, Math.round(mapH * 0.04)))}px`;
+        const sumPad = `${Math.max(3, Math.min(8, Math.round(usedMapH * 0.03)))}px`;
 
-        // ── 5. Build table rows ─────────────────────────────────────────
+        // ── 6. Build table rows ─────────────────────────────────────────
         let visitsHTML = '';
         visitData.forEach((item, i) => {
             const num = parseInt(item.Sl) || (i+1);
@@ -1299,7 +1396,10 @@ async function exportPDF() {
                 </tr>`;
         });
 
-        // ── 6. Assemble preview HTML ────────────────────────────────────
+        // ── 7. Assemble preview HTML ────────────────────────────────────
+        // CRITICAL: Map uses object-fit:contain with explicit width/height
+        // to preserve aspect ratio. The container is centered with a subtle
+        // background so any letterboxing is visually clean.
         const previewHTML = `
             <div id="pdfExportRoot" style="padding:0;font-family:Inter,system-ui,-apple-system,sans-serif;color:#1e293b;width:${PAGE_W}mm;box-sizing:border-box;">
                 <!-- Header -->
@@ -1310,9 +1410,11 @@ async function exportPDF() {
                     <p style="font-size:8px;margin:4px 0 0 0;opacity:0.7;">${fmtDate(date)}</p>
                 </div>
 
-                <!-- Map -->
-                <div style="padding:${sumPad} ${MARGIN_X}mm 0;background:#f8fafc;">
-                    <img src="${mapCanvas.toDataURL('image/png')}" style="width:100%;height:${mapH}mm;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;display:block;">
+                <!-- Map: aspect-ratio preserved with object-fit:contain -->
+                <div style="padding:${sumPad} ${MARGIN_X}mm 0;background:#f8fafc;text-align:center;">
+                    <div style="width:100%;height:${usedMapH}mm;background:#e2e8f0;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+                        <img src="${mapCanvas.toDataURL('image/png')}" style="max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;">
+                    </div>
                 </div>
 
                 <!-- Summary Stats -->
