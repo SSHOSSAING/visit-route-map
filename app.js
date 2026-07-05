@@ -581,13 +581,34 @@ function loadImage(src) {
 // LIVE LOCATION TRACKING (Viewer Mode)
 // ============================================
 
+function showMobileLocationToast(message, isError) {
+    const mapEl = document.getElementById('map');
+    if (!mapEl) return;
+    let toast = document.getElementById('mobileLocationToast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'mobileLocationToast';
+        toast.style.cssText = 'position:absolute;top:64px;left:50%;transform:translateX(-50%);color:white;padding:9px 16px;border-radius:10px;font-size:12.5px;line-height:1.4;z-index:2000;max-width:85%;text-align:center;box-shadow:0 4px 14px rgba(0,0,0,0.25);pointer-events:none;';
+        mapEl.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.style.background = isError ? 'rgba(220,38,38,0.95)' : 'rgba(15,23,42,0.92)';
+    toast.style.display = 'block';
+    clearTimeout(toast._hideTimeout);
+    toast._hideTimeout = setTimeout(() => { toast.style.display = 'none'; }, isError ? 7000 : 4000);
+}
+
 function toggleLocationTracking() {
     if (isTracking) { stopLocationTracking(); return; }
-    if (!navigator.geolocation) { alert('Geolocation is not supported on this browser/device.'); return; }
+    if (!navigator.geolocation) {
+        alert('Geolocation is not supported on this browser/device.');
+        return;
+    }
 
     const status = document.getElementById('locationStatus');
     status.classList.remove('hidden');
     status.textContent = 'Requesting location permission…';
+    showMobileLocationToast('Requesting location permission…', false);
 
     geoWatchId = navigator.geolocation.watchPosition(
         pos => {
@@ -600,12 +621,25 @@ function toggleLocationTracking() {
                 const mobileBtn = document.getElementById('mobileLocationBtn');
                 if (mobileBtn) mobileBtn.style.color = '#dc2626';
             }
-            status.textContent = `Live — accuracy ±${Math.round(pos.coords.accuracy)}m`;
+            const liveMsg = `Live — accuracy ±${Math.round(pos.coords.accuracy)}m`;
+            status.textContent = liveMsg;
+            showMobileLocationToast(liveMsg, false);
             updateUserLocationMarker(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
         },
         err => {
             console.error(err);
-            status.textContent = 'Could not get your location: ' + (err.message || 'permission denied');
+            let msg;
+            if (err.code === 1) {
+                msg = 'Location access was denied. Enable location for this site in your browser settings, then try again.';
+            } else if (err.code === 2) {
+                msg = "Couldn't get your location — please turn on Location Services / GPS on your device, then try again.";
+            } else if (err.code === 3) {
+                msg = 'Location request timed out. Please try again.';
+            } else {
+                msg = 'Could not get your location: ' + (err.message || 'unknown error');
+            }
+            status.textContent = msg;
+            showMobileLocationToast(msg, true);
             stopLocationTracking();
         },
         { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 }
