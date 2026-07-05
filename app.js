@@ -18,6 +18,7 @@ let userLocationMarker = null;
 let userAccuracyCircle = null;
 let geoWatchId = null;
 let isTracking = false;
+let routeHighlightActive = false;
 
 const OSRM_BASE = 'https://router.project-osrm.org/route/v1/driving/';
 const MARKER_COLOR = '#0d9488';
@@ -91,6 +92,23 @@ function applyMobileLayout() {
         if (toggleBtn) toggleBtn.style.display = 'none';
     }
 
+    // Ensure map fits viewport
+    const mapEl = document.getElementById('map');
+    if (mapEl && isMobileDevice()) {
+        mapEl.style.width = '100vw';
+        mapEl.style.maxWidth = '100vw';
+    }
+
+    // Invalidate map size after layout change
+    if (map) {
+        setTimeout(() => map.invalidateSize({ animate: false }), 100);
+    }
+}
+
+// Toggles a visual highlight on the route lines (mobile "Show Visit Route" control).
+// Must be a top-level function: it's called from the click handler set up in
+// initMap(), and was previously (incorrectly) nested inside applyMobileLayout(),
+// which made it inaccessible outside that function's own scope.
 function toggleRouteHighlight() {
     routeHighlightActive = !routeHighlightActive;
     const btn = document.getElementById('mobileShowRouteBtn');
@@ -134,20 +152,6 @@ function toggleRouteHighlight() {
             btn.style.color = '#334155';
             btn.style.borderColor = '';
         }
-    }
-}
-
-
-    // Ensure map fits viewport
-    const mapEl = document.getElementById('map');
-    if (mapEl && isMobileDevice()) {
-        mapEl.style.width = '100vw';
-        mapEl.style.maxWidth = '100vw';
-    }
-
-    // Invalidate map size after layout change
-    if (map) {
-        setTimeout(() => map.invalidateSize({ animate: false }), 100);
     }
 }
 
@@ -196,9 +200,6 @@ function initMap() {
     new LocationControl().addTo(map);
 
     // Show Visit Route toggle control (mobile viewer mode)
-    let routeHighlightActive = false;
-    let routeHighlightLines = [];
-
     const ShowRouteControl = L.Control.extend({
         options: { position: 'topright' },
         onAdd: function() {
@@ -1293,184 +1294,71 @@ async function exportPDF() {
     try {
         const mapCanvas = await captureMapForExport();
 
-        // ── Intelligent Dynamic Scaling ────────────────────────────────
-        // A4 page = 210mm × 297mm. We allocate fixed space for header,
-        // footer, summary, and table header. The remaining space is shared
-        // between the map image and the data rows.
-        //
-        // CRITICAL FIX: Map aspect ratio is preserved. The map container
-        // uses the captured canvas's natural aspect ratio. The container
-        // height is calculated proportionally from the canvas dimensions,
-        // never by forcing a fixed height that would distort the image.
-        // ────────────────────────────────────────────────────────────────
-
-        const PAGE_W = 210;
-        const PAGE_H = 297;
-        const MARGIN_X = 10;           // left/right page margin
-        const HEADER_H = 28;             // teal gradient header
-        const FOOTER_H = 22;             // disclaimer + credits
-        const SUMMARY_H = 18;            // 3-column stats bar
-        const TABLE_HEAD_H = 8;          // table header row
-        const GAP = 3;                   // gap between sections
-        const CONTENT_W = PAGE_W - (MARGIN_X * 2);  // usable content width
-
-        const n = visitData.length;
-
-        // ── 1. Row-height budget ───────────────────────────────────────
-        let rowH;
-        if (n <= 6)       rowH = 9.0;
-        else if (n <= 10) rowH = 7.0;
-        else if (n <= 18) rowH = 5.5;
-        else if (n <= 30) rowH = 4.8;
-        else              rowH = 4.5;   // absolute floor
-
-        const tableBodyH = n * rowH;
-        const tableTotalH = TABLE_HEAD_H + tableBodyH;
-
-        // ── 2. Map height: preserve aspect ratio ──────────────────────
-        // Calculate the map's natural proportional height based on the
-        // captured canvas dimensions and the PDF content width.
-        const canvasRatio = mapCanvas.height / mapCanvas.width;  // h/w
-        const naturalMapH = CONTENT_W * canvasRatio;              // proportional height in mm
-
-        // ── 3. Content budget check ───────────────────────────────────
-        const fixedH = HEADER_H + FOOTER_H + SUMMARY_H + tableTotalH + (GAP * 4);
-        const availableForMap = PAGE_H - fixedH;
-
-        // If natural height fits, use it. If not, squeeze OTHER elements
-        // (reduce summary padding, shrink table more, reduce gaps) rather
-        // than distorting the map.
-        let mapH, usedMapH;
-        if (naturalMapH <= availableForMap) {
-            // Natural height fits — use it for perfect aspect ratio
-            mapH = naturalMapH;
-            usedMapH = mapH;
-        } else {
-            // Natural height exceeds available space. We MUST keep aspect ratio,
-            // so we squeeze the non-map elements instead.
-            // Strategy: reduce row height further, shrink gaps, compress summary.
-            let squeezedRowH = rowH;
-            let squeezedGap = GAP;
-            let squeezedSumH = SUMMARY_H;
-
-            // Iteratively squeeze until map fits or we hit floors
-            while (naturalMapH > (PAGE_H - (HEADER_H + FOOTER_H + squeezedSumH + (TABLE_HEAD_H + n * squeezedRowH) + (squeezedGap * 4)))) {
-                if (squeezedRowH > 4.0) { squeezedRowH -= 0.2; continue; }
-                if (squeezedGap > 1) { squeezedGap -= 0.5; continue; }
-                if (squeezedSumH > 12) { squeezedSumH -= 1; continue; }
-                break; // can't squeeze any more
-            }
-
-            // Recalculate with squeezed values
-            rowH = squeezedRowH;
-            const squeezedTableH = TABLE_HEAD_H + (n * rowH);
-            const squeezedFixedH = HEADER_H + FOOTER_H + squeezedSumH + squeezedTableH + (squeezedGap * 4);
-            mapH = PAGE_H - squeezedFixedH;
-
-            // Absolute safety: if still negative, clamp to minimum and let
-            // downloadPDF's uniform scale handle the rest
-            if (mapH < 25) mapH = 25;
-            usedMapH = mapH;
-        }
-
-        // ── 4. Font sizes derived from row height ───────────────────────
-        const bodyFont = Math.max(7, Math.min(11, Math.round(rowH * 1.9)));
-        const subFont  = Math.max(6.5, bodyFont - 1);
-        const headFont = Math.max(6.5, Math.min(9, bodyFont - 0.5));
-        const sumFont  = Math.max(9, Math.min(16, Math.round(usedMapH * 0.12)));
-
-        // ── 5. Padding derived from row height ─────────────────────────
-        const vPad = Math.max(1, Math.min(4, Math.round((rowH - bodyFont * 0.35) / 2)));
-        const hPad = 5;
-        const rowPad = `${vPad}px ${hPad}px`;
-        const headPad = `${vPad}px ${hPad}px`;
-        const sumPad = `${Math.max(3, Math.min(8, Math.round(usedMapH * 0.03)))}px`;
-
-        // ── 6. Build table rows ─────────────────────────────────────────
         let visitsHTML = '';
         visitData.forEach((item, i) => {
             const num = parseInt(item.Sl) || (i+1);
             visitsHTML += `
                 <tr style="border-bottom:1px solid #e2e8f0;">
-                    <td style="padding:${rowPad};font-size:${bodyFont}px;font-weight:700;color:#0d9488;vertical-align:top;text-align:center;">${num}</td>
-                    <td style="padding:${rowPad};font-size:${bodyFont}px;color:#1e293b;font-weight:600;vertical-align:top;word-break:break-word;">${escapeHtml(clean(item.Activity))||'--'}</td>
-                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(clean(item.Time))||'--'}</td>
-                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(clean(item.Duration))||'--'}</td>
-                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(clean(item.Camp))||'--'}</td>
-                    <td style="padding:${rowPad};font-size:${subFont}px;color:#475569;vertical-align:top;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(clean(item.Agency))||'--'}</td>
+                    <td style="padding:10px 8px;font-size:12px;font-weight:700;color:#0d9488;width:30px;">${num}</td>
+                    <td style="padding:10px 8px;font-size:12px;color:#1e293b;font-weight:600;">${clean(item.Activity)||'--'}</td>
+                    <td style="padding:10px 8px;font-size:11px;color:#475569;">${clean(item.Time)||'--'}</td>
+                    <td style="padding:10px 8px;font-size:11px;color:#475569;">${clean(item.Duration)||'--'}</td>
+                    <td style="padding:10px 8px;font-size:11px;color:#475569;">${clean(item.Camp)||'--'}</td>
+                    <td style="padding:10px 8px;font-size:11px;color:#475569;">${clean(item.Agency)||'--'}</td>
                 </tr>`;
         });
 
-        // ── 7. Assemble preview HTML ────────────────────────────────────
-        // CRITICAL: Map uses object-fit:contain with explicit width/height
-        // to preserve aspect ratio. The container is centered with a subtle
-        // background so any letterboxing is visually clean.
         const previewHTML = `
-            <div id="pdfExportRoot" style="padding:0;font-family:Inter,system-ui,-apple-system,sans-serif;color:#1e293b;width:${PAGE_W}mm;box-sizing:border-box;">
-                <!-- Header -->
-                <div style="background:linear-gradient(135deg,#0f766e 0%,#115e59 100%);color:white;padding:10px ${MARGIN_X}mm;position:relative;height:${HEADER_H}mm;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;">
-                    ${logoDataUrl?`<img src="${logoDataUrl}" style="position:absolute;top:8px;right:${MARGIN_X}mm;max-height:22px;max-width:60px;object-fit:contain;background:white;padding:2px 4px;border-radius:4px;">`:''}
-                    <h1 style="font-size:15px;font-weight:800;margin:0;letter-spacing:-0.3px;line-height:1.2;${logoDataUrl?'max-width:78%;':''}">${escapeHtml(title)}</h1>
-                    ${subtitle?`<p style="font-size:10px;margin:3px 0 0 0;opacity:0.9;line-height:1.2;${logoDataUrl?'max-width:78%;':''}">${escapeHtml(subtitle)}</p>`:''}
-                    <p style="font-size:8px;margin:4px 0 0 0;opacity:0.7;">${fmtDate(date)}</p>
+            <div style="padding:0;font-family:Inter,sans-serif;color:#1e293b;width:210mm;">
+                <div style="background:linear-gradient(135deg,#0f766e 0%,#115e59 100%);color:white;padding:24px 30px;position:relative;">
+                    ${logoDataUrl?`<img src="${logoDataUrl}" style="position:absolute;top:18px;right:30px;max-height:34px;max-width:80px;object-fit:contain;background:white;padding:4px;border-radius:6px;">`:''}
+                    <h1 style="font-size:22px;font-weight:800;margin:0;letter-spacing:-0.5px;${logoDataUrl?'max-width:82%;':''}">${title}</h1>
+                    ${subtitle?`<p style="font-size:14px;margin:6px 0 0 0;opacity:0.9;${logoDataUrl?'max-width:82%;':''}">${subtitle}</p>`:''}
+                    <p style="font-size:12px;margin:8px 0 0 0;opacity:0.7;">${fmtDate(date)}</p>
                 </div>
 
-                <!-- Map: aspect-ratio preserved with object-fit:contain -->
-                <div style="padding:${sumPad} ${MARGIN_X}mm 0;background:#f8fafc;text-align:center;">
-                    <div style="width:100%;height:${usedMapH}mm;background:#e2e8f0;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-                        <img src="${mapCanvas.toDataURL('image/png')}" style="max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;display:block;">
-                    </div>
+                <div style="padding:20px 30px;background:#f8fafc;">
+                    <img src="${mapCanvas.toDataURL('image/png')}" style="width:100%;border-radius:8px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,0.05);display:block;">
                 </div>
 
-                <!-- Summary Stats -->
-                <div style="display:flex;gap:8px;margin:${sumPad} ${MARGIN_X}mm;padding:${sumPad};background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;box-sizing:border-box;">
+                <div style="display:flex;gap:16px;margin:0 30px 20px;padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;">
                     <div style="flex:1;text-align:center;">
-                        <p style="font-size:${sumFont}px;font-weight:700;color:#0d9488;margin:0;line-height:1;">${locCount}</p>
-                        <p style="font-size:8px;color:#64748b;margin:2px 0 0 0;">Locations</p>
+                        <p style="font-size:20px;font-weight:700;color:#0d9488;margin:0;">${locCount}</p>
+                        <p style="font-size:11px;color:#64748b;margin:4px 0 0 0;">Locations</p>
                     </div>
                     <div style="flex:1;text-align:center;border-left:1px solid #e2e8f0;">
-                        <p style="font-size:${sumFont}px;font-weight:700;color:#0d9488;margin:0;line-height:1;">${totalDist}</p>
-                        <p style="font-size:8px;color:#64748b;margin:2px 0 0 0;">Total Distance</p>
+                        <p style="font-size:20px;font-weight:700;color:#0d9488;margin:0;">${totalDist}</p>
+                        <p style="font-size:11px;color:#64748b;margin:4px 0 0 0;">Total Distance</p>
                     </div>
                     <div style="flex:1;text-align:center;border-left:1px solid #e2e8f0;">
-                        <p style="font-size:${sumFont}px;font-weight:700;color:#0d9488;margin:0;line-height:1;">${driveTime}</p>
-                        <p style="font-size:8px;color:#64748b;margin:2px 0 0 0;">Est. Drive Time</p>
+                        <p style="font-size:20px;font-weight:700;color:#0d9488;margin:0;">${driveTime}</p>
+                        <p style="font-size:11px;color:#64748b;margin:4px 0 0 0;">Est. Drive Time</p>
                     </div>
                 </div>
 
-                <!-- Visit Schedule Table -->
-                <div style="padding:0 ${MARGIN_X}mm ${sumPad};">
-                    <h2 style="font-size:10px;font-weight:700;color:#0f766e;margin:0 0 4px 0;padding-bottom:3px;border-bottom:1.5px solid #0d9488;text-transform:uppercase;letter-spacing:0.5px;">Visit Schedule</h2>
-                    <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
-                        <colgroup>
-                            <col style="width:5%;">
-                            <col style="width:30%;">
-                            <col style="width:20%;">
-                            <col style="width:15%;">
-                            <col style="width:15%;">
-                            <col style="width:15%;">
-                        </colgroup>
+                <div style="padding:0 30px 20px;">
+                    <h2 style="font-size:16px;font-weight:700;color:#0f766e;margin:0 0 12px 0;padding-bottom:8px;border-bottom:2px solid #0d9488;">Visit Schedule</h2>
+                    <table style="width:100%;border-collapse:collapse;">
                         <thead>
                             <tr style="background:#f0fdfa;">
-                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">#</th>
-                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Activity</th>
-                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Time</th>
-                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Dur.</th>
-                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Camp</th>
-                                <th style="padding:${headPad};font-size:${headFont}px;font-weight:700;color:#0f766e;text-align:left;">Agency</th>
+                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">#</th>
+                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">Activity</th>
+                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">Time</th>
+                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">Duration</th>
+                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">Camp</th>
+                                <th style="padding:10px 8px;font-size:11px;font-weight:700;color:#0f766e;text-align:left;text-transform:uppercase;">Agency</th>
                             </tr>
                         </thead>
                         <tbody>${visitsHTML}</tbody>
                     </table>
                 </div>
 
-                <!-- Footer -->
-                <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:6px ${MARGIN_X}mm;box-sizing:border-box;">
-                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 0 3px 0;">
-                        <p style="font-size:7px;color:#94a3b8;margin:0;">Created: ${created} &nbsp;|&nbsp; Source: ${escapeHtml(source)}</p>
-                        <p style="font-size:7px;color:#94a3b8;margin:0;">Developed by Sabbir Hossain</p>
+                <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:16px 30px;">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 0 8px 0;">
+                        <p style="font-size:10px;color:#94a3b8;margin:0;">Created on: ${created}  ||  Data source: ${source}</p>
+                        <p style="font-size:9px;color:#94a3b8;margin:0;">Developed by Sabbir Hossain</p>
                     </div>
-                    <div style="font-size:7px;color:#64748b;line-height:1.3;border-left:2px solid #0d9488;padding-left:6px;background:#f0fdfa;padding:3px 6px;border-radius:0 4px 4px 0;">
+                    <div style="font-size:9px;color:#64748b;line-height:1.5;border-left:3px solid #0d9488;padding-left:10px;background:#f0fdfa;padding:8px 12px;border-radius:0 6px 6px 0;">
                         <strong>Disclaimer:</strong> The boundaries and names shown and the designations used on this map do not imply official endorsement or acceptance by the United Nations.
                     </div>
                 </div>
@@ -1486,68 +1374,35 @@ async function exportPDF() {
     }
 }
 
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
 function downloadPDF() {
     const { jsPDF } = window.jspdf;
     const title = document.getElementById('routeTitle').value.trim() || 'Visit Route Map';
+    // NOTE: v12 originally omitted these two declarations, which meant `subtitle`
+    // and `date` below were undefined -> pdf.save() threw and the download
+    // silently failed. Declaring them here (same pattern as the rest of the app)
+    // is the only change from v12's original download logic.
     const subtitle = document.getElementById('routeSubtitle').value.trim();
     const date = document.getElementById('routeDate').value;
     const element = document.getElementById('pdfPreviewContainer');
 
     showLoading(true);
 
-    html2canvas(element, {
-        scale: 2.5,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-        imageTimeout: 0,
-        onclone: (clonedDoc) => {
-            const root = clonedDoc.getElementById('pdfExportRoot');
-            if (root) {
-                root.style.width = '210mm';
-                root.style.maxWidth = '210mm';
-                root.style.overflow = 'hidden';
-            }
-        }
-    }).then(canvas => {
+    html2canvas(element, { scale: 2, useCORS: true }).then(canvas => {
+        const imgData = canvas.toDataURL('image/png');
         const pdf = new jsPDF('p', 'mm', 'a4');
-        const pageW = 210, pageH = 297;
-        const marginTop = 0.5, marginBottom = 0.5;
-        const contentH = pageH - marginTop - marginBottom;
+        const imgW = 210;
+        const pageH = 297;
+        const imgH = (canvas.height * imgW) / canvas.width;
+        let hLeft = imgH, pos = 0;
 
-        // Calculate image dimensions to fit within content area (with 0.5mm top/bottom margins)
-        const imgRatio = canvas.width / canvas.height;
-        const contentRatio = pageW / contentH;
-
-        let imgW, imgH, x, y;
-
-        if (imgRatio > contentRatio) {
-            // Image is wider relative to content area — fit to width
-            imgW = pageW;
-            imgH = imgW / imgRatio;
-            x = 0;
-            y = marginTop + (contentH - imgH) / 2;
-        } else {
-            // Image is taller relative to content area — fit to height
-            imgH = contentH;
-            imgW = imgH * imgRatio;
-            x = (pageW - imgW) / 2;
-            y = marginTop;
+        pdf.addImage(imgData, 'PNG', 0, pos, imgW, imgH);
+        hLeft -= pageH;
+        while (hLeft > 0) {
+            pos = hLeft - imgH;
+            pdf.addPage();
+            pdf.addImage(imgData, 'PNG', 0, pos, imgW, imgH);
+            hLeft -= pageH;
         }
-
-        // Ensure we never exceed content bounds (safety clamp)
-        if (imgW > pageW) { imgW = pageW; imgH = imgW / imgRatio; x = 0; y = marginTop + (contentH - imgH) / 2; }
-        if (imgH > contentH) { imgH = contentH; imgW = imgH * imgRatio; y = marginTop; x = (pageW - imgW) / 2; }
-
-        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', x, y, imgW, imgH);
-
         const pdfNameBase = subtitle ? slugify(subtitle) : slugify(title);
         const pdfName = date ? `${pdfNameBase}_${date}.pdf` : `${pdfNameBase}.pdf`;
         pdf.save(pdfName);
@@ -1559,6 +1414,7 @@ function downloadPDF() {
         showLoading(false);
     });
 }
+
 // ============================================
 // SAMPLE DATA
 // ============================================
