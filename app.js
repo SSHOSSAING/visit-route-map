@@ -848,6 +848,8 @@ function renderViewerRoute(r) {
     document.getElementById('btnViewMode').classList.remove('hidden');
     document.getElementById('btnLoadSample').classList.add('hidden');
     document.body.classList.add('viewer-mode');
+    const guideLinkEl = document.getElementById('guideLink');
+    if (guideLinkEl) guideLinkEl.setAttribute('href', 'guide-viewer.html');
 
     document.getElementById('viewerTitle').textContent = r.title || 'Untitled Route';
     document.getElementById('viewerSubtitle').textContent = r.subtitle || '';
@@ -968,6 +970,8 @@ function exitViewerMode() {
     stopLocationTracking();
     closeMobileInfoSheet();
     document.body.classList.remove('viewer-mode');
+    const guideLinkEl = document.getElementById('guideLink');
+    if (guideLinkEl) guideLinkEl.setAttribute('href', 'guide-creator.html');
     window.history.replaceState({}, document.title, window.location.pathname);
     document.getElementById('viewerPanel').classList.add('hidden');
     document.getElementById('viewerPanel').classList.remove('flex');
@@ -1344,9 +1348,11 @@ async function exportPDF() {
 
         const previewHTML = `
             <div style="padding:0;font-family:Inter,sans-serif;color:#1e293b;width:210mm;">
-                <div style="background:linear-gradient(135deg,#0f766e 0%,#115e59 100%);color:white;padding:24px 30px;position:relative;">
-                    ${logoDataUrl?`<img src="${logoDataUrl}" style="position:absolute;top:18px;right:30px;max-height:34px;max-width:80px;object-fit:contain;background:white;padding:4px;border-radius:6px;">`:''}
-                    <h1 style="font-size:22px;font-weight:800;margin:0;letter-spacing:-0.5px;${logoDataUrl?'max-width:82%;':''}">${title}</h1>
+                <div style="background:linear-gradient(135deg,#0f766e 0%,#115e59 100%);color:white;padding:6px 30px 24px;position:relative;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;">
+                        <h1 style="font-size:22px;font-weight:800;margin:0;letter-spacing:-0.5px;${logoDataUrl?'max-width:82%;':''}">${title}</h1>
+                        ${logoDataUrl?`<img src="${logoDataUrl}" style="max-height:34px;max-width:80px;object-fit:contain;background:white;padding:4px;border-radius:6px;flex-shrink:0;">`:''}
+                    </div>
                     ${subtitle?`<p style="font-size:14px;margin:6px 0 0 0;opacity:0.9;${logoDataUrl?'max-width:82%;':''}">${subtitle}</p>`:''}
                     <p style="font-size:12px;margin:8px 0 0 0;opacity:0.7;">${fmtDate(date)}</p>
                 </div>
